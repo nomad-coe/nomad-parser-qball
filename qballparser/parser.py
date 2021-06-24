@@ -6,14 +6,24 @@ import lzma
 from nomad.datamodel import EntryArchive, EntryMetadata
 from nomad.datamodel.dft import DFTMetadata
 from nomad.datamodel.metainfo.public import section_run as Run
+from nomad.datamodel.metainfo.public import section_system as System
+from nomad.datamodel.metainfo.public import SingleConfigurationCalculation
 from nomad.metainfo.metainfo import Quantity
 from nomad.parsing import FairdiParser
 from nomad.parsing.file_parser import Quantity, UnstructuredTextFileParser
 
+import xml.etree.ElementTree as ElementTree
+
+import numpy as np
 
 def str_to_timestamp(s: str):
     return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").timestamp()
 
+def pos_to_unit(v: float) -> float:
+    return v * 0.5291765064371143
+
+def force_to_unit(v: float) -> float:
+    return v * 8.248232521602514e-08
 
 class QBallParser(FairdiParser):
 
@@ -87,3 +97,35 @@ class QBallParser(FairdiParser):
         run.time_run_date_end = str_to_timestamp(
             self.mainfile_parser.get("end_time")
         )
+
+        element_tree = ElementTree.fromstring(contents)
+
+        #section system
+        system = run.m_create(System)
+
+        system.atom_labels = [
+            atom.attrib["name"]
+            for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")
+        ]
+
+        system.atom_positions = np.array(
+            [
+                [pos_to_unit(float(pos)) for pos in atom.find("position").text.split()]
+                for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")
+            ]
+        )
+
+        #section SingleConfigurationCalculation
+        single_configuration_calculation = run.m_create(SingleConfigurationCalculation)
+        single_configuration_calculation.atom_forces = np.array(
+            [
+                [force_to_unit(float(force)) for force in atom.find("force").text.split()]
+                for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")
+            ]
+        )
+
+
+        # import code
+        # code.interact(local={**locals(), **globals()})
+
+    
