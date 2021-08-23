@@ -78,6 +78,7 @@ class QBallParser(FairdiParser):
         dft = metadata.m_create(DFTMetadata)
 
         metadata.domain = "dft"
+        metadata.mainfile = mainfile
 
         # basis set check
         if "plane waves" not in contents:
@@ -128,4 +129,5 @@ class QBallParser(FairdiParser):
         # import code
         # code.interact(local={**locals(), **globals()})
 
-    
+    def parse(self, mainfile: str, archive: EntryArchive, logger=None) -> None:
+        self.run(mainfile, archive, logger)
