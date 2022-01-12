@@ -1,39 +1,51 @@
+#
+# Copyright The NOMAD Authors.
+#
+# This file is part of NOMAD.
+# See https://nomad-lab.eu for further info.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 import bz2
 import datetime
 import gzip
 import lzma
+import numpy as np
+import logging
 
-from nomad.datamodel import EntryArchive, EntryMetadata
-from nomad.datamodel.dft import DFTMetadata
-from nomad.datamodel.metainfo.public import section_run as Run
-from nomad.datamodel.metainfo.public import section_system as System
-from nomad.datamodel.metainfo.public import SingleConfigurationCalculation
-from nomad.metainfo.metainfo import Quantity
+from nomad.units import ureg
+from nomad.datamodel.metainfo.simulation.run import Run, Program, TimeRun
+from nomad.datamodel.metainfo.simulation.system import System, Atoms
+from nomad.datamodel.metainfo.simulation.method import Method, BasisSet
+from nomad.datamodel.metainfo.simulation.calculation import Calculation, Forces, ForcesEntry
 from nomad.parsing import FairdiParser
-from nomad.parsing.file_parser import Quantity, UnstructuredTextFileParser
+from nomad.parsing.file_parser import Quantity, TextParser
 
 import xml.etree.ElementTree as ElementTree
 
-import numpy as np
 
 def str_to_timestamp(s: str):
     return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").timestamp()
 
-def pos_to_unit(v: float) -> float:
-    return v * 0.5291765064371143
-
-def force_to_unit(v: float) -> float:
-    return v * 8.248232521602514e-08
 
 class QBallParser(FairdiParser):
 
-    mainfile_parser = UnstructuredTextFileParser(
+    mainfile_parser = TextParser(
         quantities=[
             Quantity(
                 "atoms",
-                # r"species (\w+):",
                 r"symbol_ = (\w+)",
-                # r"read symbol (\w+)"
                 repeats=True,
             ),
             Quantity(
@@ -54,12 +66,11 @@ class QBallParser(FairdiParser):
             name="parsers/qball",
             code_name="qball",
             mainfile_contents_re="qball",
-            supported_compressions=["gz", "bz2", "xz"],
-        )
+            supported_compressions=["gz", "bz2", "xz"])
 
-    def run(self, mainfile: str, archive: EntryArchive, logger):
+    def parse(self, mainfile, archive, logger=None):
+        logger = logger if logger is not None else logging.getLogger('__name__')
 
-        open_file = open
         if mainfile.endswith(".gz"):
             open_file = gzip.open
         elif mainfile.endswith(".bz2"):
@@ -74,60 +85,32 @@ class QBallParser(FairdiParser):
         self.mainfile_parser.parse()
 
         run = archive.m_create(Run)
-        metadata = archive.m_create(EntryMetadata)
-        dft = metadata.m_create(DFTMetadata)
+        run.program = Program(name='qball')
+        run.time_run = TimeRun(
+            date_start=str_to_timestamp(self.mainfile_parser.get("start_time")),
+            date_end=str_to_timestamp(self.mainfile_parser.get("end_time")))
 
-        metadata.domain = "dft"
-        metadata.mainfile = mainfile
-
-        # basis set check
+        # method
+        method = run.m_create(Method)
+        # TODO add dft functionals
         if "plane waves" not in contents:
-            print("Qball Error: Not a plane wave dft")
-        dft.basis_set = "plane waves"
-        dft.crystal_system = "cubic"
-        dft.code_name = "qball"
-
-        # get atoms
-
-        metadata.atoms = self.mainfile_parser.get("atoms")
-
-        run.program_name = "qball"
-        run.time_run_date_start = str_to_timestamp(
-            self.mainfile_parser.get("start_time")
-        )
-        run.time_run_date_end = str_to_timestamp(
-            self.mainfile_parser.get("end_time")
-        )
+            logger.error("Qball Error: Not a plane wave dft")
+        else:
+            basis_set = method.m_create(BasisSet)
+            basis_set.type = "plane waves"
 
         element_tree = ElementTree.fromstring(contents)
 
-        #section system
+        # system
         system = run.m_create(System)
+        system.atoms = Atoms(
+            labels=[atom.attrib["name"] for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")],
+            positions=np.array([
+                [float(pos) for pos in atom.find("position").text.split()]
+                for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")]) * ureg.bohr)
 
-        system.atom_labels = [
-            atom.attrib["name"]
-            for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")
-        ]
-
-        system.atom_positions = np.array(
-            [
-                [pos_to_unit(float(pos)) for pos in atom.find("position").text.split()]
-                for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")
-            ]
-        )
-
-        #section SingleConfigurationCalculation
-        single_configuration_calculation = run.m_create(SingleConfigurationCalculation)
-        single_configuration_calculation.atom_forces = np.array(
-            [
-                [force_to_unit(float(force)) for force in atom.find("force").text.split()]
-                for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")
-            ]
-        )
-
-
-        # import code
-        # code.interact(local={**locals(), **globals()})
-
-    def parse(self, mainfile: str, archive: EntryArchive, logger=None) -> None:
-        self.run(mainfile, archive, logger)
+        # calculation
+        calculation = run.m_create(Calculation)
+        calculation.forces = Forces(total=ForcesEntry(value=np.array([
+            [float(force) for force in atom.find("force").text.split()]
+            for atom in element_tree.find("run").find("iteration").find("atomset").iter("atom")]) * ureg.hartree / ureg.bohr))
