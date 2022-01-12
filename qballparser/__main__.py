@@ -11,7 +11,7 @@ from .parser import QBallParser
 
 def parse(filename: str):
     archive = EntryArchive()
-    QBallParser().run(filename, archive, logging)
+    QBallParser().parse(filename, archive, logging)
     json.dump(archive.m_to_dict(), sys.stdout, indent=2)
 
 
