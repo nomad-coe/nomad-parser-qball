@@ -17,9 +17,9 @@
 #
 
 import pytest
-import numpy as np
+# import numpy as np
 
-from nomad.datamodel import EntryArchive
+# from nomad.datamodel import EntryArchive
 from abinitparser import AbinitParser
 
 
@@ -33,5 +33,6 @@ def parser():
 
 
 def test(parser):
-    archive = EntryArchive()
+    # archive = EntryArchive()
     # TODO add test
+    pass
